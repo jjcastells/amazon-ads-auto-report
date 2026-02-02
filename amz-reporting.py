@@ -287,17 +287,17 @@ st.subheader("2) Define cómo detectar Mercados y Tipos desde el nombre de campa
 
 cc1, cc2 = st.columns(2)
 with cc1:
-    markets_simple = st.text_input("Mercados (canónicos) separados por coma", value="ES,IT,DE,FR,UK")
+    markets_simple = st.text_input("Mercados (canónicos) separados por coma", value="(ES),(IT),(DE),(FR),(UK)")
     markets_alias = st.text_area(
         "Aliases de mercados (opcional). Formato: CANON=alias1,alias2,... (1 por línea)",
-        value="UK=GB,(GB),(UK)\nDE=ALE",
+        value="",
         height=120
     )
 with cc2:
     tags_simple = st.text_input("Tipos/Tags de campaña separados por coma (internos)", value="NB,BR,AUTO,PAT,KW")
     tags_alias = st.text_area(
         "Aliases de tags (opcional). Formato: CANON=alias1,alias2,... (1 por línea)",
-        value="AUTO=AUTOMATIC,AUT\nBR=BRANDED\nNB=NON-BRANDED,NONBRAND",
+        value="",
         height=120
     )
 
