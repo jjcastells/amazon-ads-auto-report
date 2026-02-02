@@ -88,6 +88,17 @@ def sanitize_sheet_name(name: str) -> str:
     cleaned = cleaned.strip() or "Sheet"
     return cleaned[:31]
 
+def safe_sheet_prefix(client: str) -> str:
+    """
+    Prefijo seguro (corto) para hojas: elimina caracteres raros y limita longitud.
+    """
+    c = re.sub(r"[^A-Za-z0-9\s\-_]", "", str(client)).strip()
+    c = re.sub(r"\s+", " ", c)
+    if not c:
+        c = "CLIENT"
+    # Queremos algo corto para no matar el límite de 31 chars en sheet_name
+    return c[:12]
+
 def parse_alias_lines(text: str) -> dict[str, list[str]]:
     """
     Formato:
@@ -112,7 +123,7 @@ def parse_alias_lines(text: str) -> dict[str, list[str]]:
 
 def build_token_map(simple_csv: str, alias_map: dict[str, list[str]]) -> dict[str, list[str]]:
     """
-    Si el usuario pone: ES,IT,DE,FR,UK
+    Si el usuario pone: (ES),(IT),(DE),(FR),(UK)
     y alias_map añade equivalencias, las incorpora.
     """
     base = [x.strip().upper() for x in simple_csv.split(",") if x.strip()]
@@ -120,7 +131,6 @@ def build_token_map(simple_csv: str, alias_map: dict[str, list[str]]) -> dict[st
     for t in base:
         token_map[t] = [t]
         if t in alias_map:
-            # añade alias extra
             token_map[t] = list(dict.fromkeys([t] + alias_map[t]))
     return token_map
 
@@ -166,9 +176,6 @@ def fmt_int(x: float | int) -> str:
 def fmt_pct(x: float) -> str:
     return f"{float(x)*100:.2f}%"
 
-def fmt_pp(x: float) -> str:
-    return f"{float(x):.2f} pp"
-
 # =====================
 # Client-friendly layer
 # =====================
@@ -207,7 +214,6 @@ def build_client_kpis(global_prev: pd.DataFrame, global_curr: pd.DataFrame) -> p
     return k
 
 def pick_top_watchlist(camp_mom: pd.DataFrame, top_n=3) -> pd.DataFrame:
-    # campañas con Spend↑ y Sales↓ → malas
     w = camp_mom[(camp_mom["spend_delta"] > 0) & (camp_mom["sales_delta"] < 0)].copy()
     w = w.sort_values("spend_delta", ascending=False).head(top_n)
     cols = ["campaign_name","market","camp_tag","spend_delta","sales_delta","acos_delta"]
@@ -215,9 +221,7 @@ def pick_top_watchlist(camp_mom: pd.DataFrame, top_n=3) -> pd.DataFrame:
     return w[cols]
 
 def pick_top_winners(camp_mom: pd.DataFrame, top_n=3) -> pd.DataFrame:
-    # ganadores = Sales↑ y ACOS↓ (o estable) → buenas
     w = camp_mom[(camp_mom["sales_delta"] > 0) & (camp_mom["acos_delta"] <= 0)].copy()
-    # prioriza por ventas
     w = w.sort_values("sales_delta", ascending=False).head(top_n)
     cols = ["campaign_name","market","camp_tag","sales_delta","spend_delta","acos_delta"]
     cols = [c for c in cols if c in w.columns]
@@ -238,20 +242,16 @@ def build_client_insights(global_prev: pd.DataFrame,
     sales_delta = sales_curr - sales_prev
     acos_delta_pp = (acos_curr - acos_prev) * 100
 
-    # Driver por mercado (contribución a SpendΔ / SalesΔ)
     mom_mkt = add_mom(by_market_prev, by_market_curr, ["market"])
     mom_mkt = mom_mkt.sort_values("spend_delta", ascending=False)
 
     top_mkt_spend = mom_mkt.head(1).iloc[0].to_dict() if len(mom_mkt) else None
-    top_mkt_sales = mom_mkt.sort_values("sales_delta", ascending=False).head(1).iloc[0].to_dict() if len(mom_mkt) else None
 
-    # watchlist / winners para texto
     watch = pick_top_watchlist(camp_mom, top_n=3)
     wins = pick_top_winners(camp_mom, top_n=3)
 
     insights = []
 
-    # Insight 1: visión global
     tone = "mejora" if acos_delta_pp < 0 else "empeora" if acos_delta_pp > 0 else "se mantiene"
     insights.append({
         "Title": "Resumen del mes",
@@ -260,7 +260,6 @@ def build_client_insights(global_prev: pd.DataFrame,
         "Action": "Mantener lo que está escalando bien y recortar desperdicio donde el spend crece sin acompañarse de ventas."
     })
 
-    # Insight 2: driver principal por spend
     if top_mkt_spend:
         mkt = top_mkt_spend.get("market", "N/A")
         sd = float(top_mkt_spend.get("spend_delta", 0.0))
@@ -268,15 +267,12 @@ def build_client_insights(global_prev: pd.DataFrame,
         insights.append({
             "Title": "Driver principal (por inversión)",
             "What": f"El mayor cambio de inversión viene de {mkt}: Spend Δ {fmt_eur(sd)} y Sales Δ {fmt_eur(sld)}.",
-            "SoWhat": "Ese mercado está explicando gran parte del movimiento del mes.",
+            "SoWhat": "Ese mercado explica gran parte del movimiento del mes.",
             "Action": f"Revisar {mkt} para asegurar que el aumento de inversión está alineado con ventas (y ajustar lo que no)."
         })
 
-    # Insight 3: campañas a revisar
     if len(watch):
-        items = []
-        for _, r in watch.iterrows():
-            items.append(f"{r['campaign_name']} ({r.get('market','')})")
+        items = [f"{r['campaign_name']} ({r.get('market','')})" for _, r in watch.iterrows()]
         insights.append({
             "Title": "Campañas a revisar (rápido)",
             "What": "He detectado campañas donde sube la inversión pero caen las ventas: " + "; ".join(items) + ".",
@@ -288,22 +284,18 @@ def build_client_insights(global_prev: pd.DataFrame,
             "Title": "Campañas a revisar (rápido)",
             "What": "No aparecen señales fuertes de “Spend ↑ y Sales ↓” en el top de campañas.",
             "SoWhat": "Buen indicio: el crecimiento no parece venir de desperdicio obvio.",
-            "Action": "Aún así, revisamos el top spend del mes por eficiencia para mantener el control."
+            "Action": "Aun así, revisamos el top spend del mes por eficiencia para mantener el control."
         })
 
-    # Insight 4: ganadores
     if len(wins):
-        items = []
-        for _, r in wins.iterrows():
-            items.append(f"{r['campaign_name']} ({r.get('market','')})")
+        items = [f"{r['campaign_name']} ({r.get('market','')})" for _, r in wins.iterrows()]
         insights.append({
             "Title": "Lo que está funcionando",
             "What": "Campañas con ventas al alza y ACOS mejorando/estable: " + "; ".join(items) + ".",
-            "SoWhat": "Aquí suele estar el ‘motor’ del mes. Son candidatas a escalar con control.",
+            "SoWhat": "Aquí suele estar el motor del mes. Son candidatas a escalar con control.",
             "Action": "Subir presupuesto/pujas de forma gradual (sin romper ACOS) y replicar el patrón en mercados similares."
         })
 
-    # Limita a 4-5
     return insights[:5]
 
 def build_client_actions(global_prev: pd.DataFrame,
@@ -312,13 +304,11 @@ def build_client_actions(global_prev: pd.DataFrame,
     acos_prev = float(global_prev["acos"][0]); acos_curr = float(global_curr["acos"][0])
     acos_delta_pp = (acos_curr - acos_prev) * 100
 
-    # acciones base
     actions = []
     actions.append("Recorte de desperdicio: revisar campañas/targets con inversión creciente sin ventas (negatives, limpieza de targets, pausas tácticas).")
     actions.append("Escalar ganadores: incrementar presupuesto/pujas gradualmente en campañas con ventas al alza y ACOS estable o mejorando.")
     actions.append("Ajuste fino: revisar términos de búsqueda y distribución por tipo (NB/BR/AUTO) para mejorar eficiencia sin frenar volumen.")
 
-    # Si ACOS empeora, enfatiza control; si mejora, enfatiza crecimiento
     if acos_delta_pp > 0.5:
         actions.insert(0, "Prioridad del mes: recuperar eficiencia (ACOS) sin perder volumen — control de pujas y segmentación.")
     elif acos_delta_pp < -0.5:
@@ -328,25 +318,24 @@ def build_client_actions(global_prev: pd.DataFrame,
 
     return actions[:5]
 
-def generate_client_email_es(client_name: str,
+def generate_client_email_es(client: str,
+                             poc: str,
                              period_prev_label: str,
                              period_curr_label: str,
                              client_kpis: pd.DataFrame,
                              insights_list: list[dict],
-                             actions_list: list[str]) -> tuple[str, str]:
-    # asunto
-    subject = f"Amazon Ads | Reporte {period_curr_label} (vs {period_prev_label})"
+                             actions_list: list[str],
+                             sender_name: str) -> tuple[str, str]:
+    subject = f"{client} | Amazon Ads — Reporte {period_curr_label} (vs {period_prev_label})"
 
-    # KPIs principales (solo 4-5 para cliente)
     def kpi_row(kpi):
         r = client_kpis[client_kpis["KPI"] == kpi].iloc[0]
         if r["Unit"] == "€":
-            curr = fmt_eur(r["Current"]); prev = fmt_eur(r["Previous"]); delta = fmt_eur(r["Delta"])
+            curr = fmt_eur(r["Current"]); delta = fmt_eur(r["Delta"])
             return f"- **{kpi}**: {curr} (Δ {delta} vs {period_prev_label})"
         if r["Unit"] == "#":
-            curr = fmt_int(r["Current"]); prev = fmt_int(r["Previous"]); delta = fmt_int(r["Delta"])
+            curr = fmt_int(r["Current"]); delta = fmt_int(r["Delta"])
             return f"- **{kpi}**: {curr} (Δ {delta} vs {period_prev_label})"
-        # ratios
         if kpi == "ACOS":
             curr = fmt_pct(r["Current"]); delta_pp = (float(r["Delta"]) * 100)
             return f"- **ACOS**: {curr} (Δ {delta_pp:+.2f} pp vs {period_prev_label})"
@@ -363,19 +352,17 @@ def generate_client_email_es(client_name: str,
         kpi_row("ROAS"),
     ])
 
-    # Insights (máx 3 para email)
     insights_lines = []
     for it in insights_list[:3]:
         insights_lines.append(f"**{it['Title']}**: {it['What']}")
     insights_block = "\n".join([f"- {x}" for x in insights_lines]) if insights_lines else "- (Sin insights) "
 
-    # Acciones (máx 3)
     actions_block = "\n".join([f"- {a}" for a in actions_list[:3]]) if actions_list else "- (Sin acciones) "
 
-    hello = f"Hola {client_name}," if client_name.strip() else "Hola,"
+    hello = f"Hola {poc}," if poc.strip() else "Hola,"
     body = f"""{hello}
 
-Te comparto el reporte de **{period_curr_label}** (comparado con **{period_prev_label}**). Aquí va lo más importante, en corto:
+Te comparto el reporte de **{client}** para **{period_curr_label}** (comparado con **{period_prev_label}**). Te dejo lo más importante, en corto:
 
 ### KPIs clave
 {kpi_lines}
@@ -386,9 +373,10 @@ Te comparto el reporte de **{period_curr_label}** (comparado con **{period_prev_
 ### Próximas acciones (enfoque del mes)
 {actions_block}
 
-Si quieres, lo vemos 10 minutos y te cuento qué estamos tocando exactamente (sin meternos en reportes eternos 🙂).
+Si te va bien, lo vemos 10 minutos y te cuento qué estamos tocando exactamente (sin meternos en reportes eternos 🙂).
 
 Un abrazo,
+{sender_name}
 """
     return subject, body
 
@@ -402,10 +390,6 @@ def load_amz_campaign_csv(file) -> pd.DataFrame:
     return df
 
 def standardize_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normaliza columnas clave a nombres canónicos:
-      campaign_name, country, ad_type, targeting, impressions, clicks, spend, sales, orders, acos, roas, ctr, cpc
-    """
     df = df.copy()
 
     c_campaign = find_col(df, ["Nombre de la campaña", "Campaign Name"])
@@ -425,8 +409,8 @@ def standardize_metrics(df: pd.DataFrame) -> pd.DataFrame:
     rename = {}
     if c_campaign: rename[c_campaign] = "campaign_name"
     if c_country:  rename[c_country]  = "country"
-    if c_type:     rename[c_type]     = "ad_type"       # SP/SB/SD...
-    if c_target:   rename[c_target]   = "targeting"     # MANUAL/AUTOMATIC
+    if c_type:     rename[c_type]     = "ad_type"
+    if c_target:   rename[c_target]   = "targeting"
     if c_impr:     rename[c_impr]     = "impressions"
     if c_clicks:   rename[c_clicks]   = "clicks"
     if c_spend:    rename[c_spend]    = "spend"
@@ -444,7 +428,6 @@ def standardize_metrics(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Faltan columnas necesarias: {missing}")
 
-    # métricas numéricas
     for c in ["spend", "sales", "acos", "roas", "ctr", "cpc"]:
         if c in df.columns:
             df[c] = to_float_euaware(df[c])
@@ -452,7 +435,6 @@ def standardize_metrics(df: pd.DataFrame) -> pd.DataFrame:
         if c in df.columns:
             df[c] = to_int(df[c])
 
-    # Derivadas (blindaje)
     df["ctr_calc"]  = np.where(df["impressions"] > 0, df["clicks"] / df["impressions"], 0.0)
     df["cpc_calc"]  = np.where(df["clicks"] > 0, df["spend"] / df["clicks"], 0.0)
     df["acos_calc"] = np.where(df["sales"] > 0, df["spend"] / df["sales"], 0.0)
@@ -486,13 +468,11 @@ def add_mom(prev: pd.DataFrame, curr: pd.DataFrame, keys: list[str], label_prev=
     out = c.merge(p, on=keys, how="outer")
     out = out.fillna(0.0)
 
-    # deltas
     for m in ["spend","sales","orders","clicks","impressions"]:
         out[f"{m}_delta"] = out[f"{m}_{label_curr}"] - out[f"{m}_{label_prev}"]
         base = out[f"{m}_{label_prev}"].replace(0, np.nan)
         out[f"{m}_delta_pct"] = (out[f"{m}_delta"] / base).replace([np.inf, -np.inf], 0).fillna(0.0)
 
-    # ratios (delta absoluto)
     for m in ["acos","roas","ctr","cpc"]:
         out[f"{m}_delta"] = out[f"{m}_{label_curr}"] - out[f"{m}_{label_prev}"]
 
@@ -521,7 +501,7 @@ df_curr_raw = load_amz_campaign_csv(file_curr)
 st.subheader("1.5) Periodos del reporte (para naming + email)")
 pc1, pc2, pc3 = st.columns([1, 1, 1])
 with pc1:
-    prev_month = st.selectbox("Mes prev (mes-2)", SPANISH_MONTHS, index=11)  # Diciembre default
+    prev_month = st.selectbox("Mes prev (mes-2)", SPANISH_MONTHS, index=11)
 with pc2:
     prev_year = st.number_input("Año prev", min_value=2000, max_value=2100, value=2025, step=1)
 with pc3:
@@ -529,7 +509,7 @@ with pc3:
 
 cc1p, cc2p, cc3p = st.columns([1, 1, 1])
 with cc1p:
-    curr_month = st.selectbox("Mes curr (mes-1)", SPANISH_MONTHS, index=0)  # Enero default
+    curr_month = st.selectbox("Mes curr (mes-1)", SPANISH_MONTHS, index=0)
 with cc2p:
     curr_year = st.number_input("Año curr", min_value=2000, max_value=2100, value=2026, step=1)
 with cc3p:
@@ -537,6 +517,18 @@ with cc3p:
 
 period_prev_label = f"{prev_month} {int(prev_year)}"
 period_curr_label = f"{curr_month} {int(curr_year)}"
+
+# =====================
+# UI: CLIENT + POC (NEW) — justo después de periodos
+# =====================
+st.subheader("1.6) Datos del cliente")
+d1, d2 = st.columns(2)
+with d1:
+    CLIENT = st.text_input("CLIENT (Nombre de la empresa)", value="CLIENT")
+with d2:
+    POC = st.text_input("POC (Persona de contacto)", value="")
+
+client_prefix = safe_sheet_prefix(CLIENT)
 
 # =====================
 # UI: tokens (universal)
@@ -572,10 +564,8 @@ except Exception as e:
     st.error(f"Error estandarizando columnas: {e}")
     st.stop()
 
-# Detect market/tag from campaign name
 for df in (df_prev, df_curr):
     df["market"] = df["campaign_name"].apply(lambda x: detect_token(x, markets_map))
-    # puede haber múltiples tags, pero ponemos principal (primera coincidencia) y también lista
     df["tags_found"] = df["campaign_name"].apply(lambda x: detect_many_tokens(x, tags_map))
     df["camp_tag"] = df["tags_found"].apply(lambda lst: lst[0] if isinstance(lst, list) and len(lst) else "UNMAPPED")
 
@@ -606,7 +596,6 @@ if not run:
 # =====================
 # Aggregations
 # =====================
-# Global totals
 global_prev = pd.DataFrame([{
     "spend": df_prev["spend"].sum(),
     "sales": df_prev["sales"].sum(),
@@ -631,7 +620,6 @@ global_curr["roas"] = safe_div(global_curr["sales"][0], global_curr["spend"][0])
 global_curr["ctr"]  = safe_div(global_curr["clicks"][0], global_curr["impressions"][0])
 global_curr["cpc"]  = safe_div(global_curr["spend"][0], global_curr["clicks"][0])
 
-# Groupings
 by_market_prev = aggregate(df_prev, ["market"])
 by_market_curr = aggregate(df_curr, ["market"])
 by_tag_prev    = aggregate(df_prev, ["camp_tag"])
@@ -639,16 +627,14 @@ by_tag_curr    = aggregate(df_curr, ["camp_tag"])
 by_mkt_tag_prev = aggregate(df_prev, ["market","camp_tag"])
 by_mkt_tag_curr = aggregate(df_curr, ["market","camp_tag"])
 
-# Campaign-level MoM
 camp_prev = aggregate(df_prev, ["campaign_name","market","camp_tag"])
 camp_curr = aggregate(df_curr, ["campaign_name","market","camp_tag"])
 camp_mom  = add_mom(camp_prev, camp_curr, keys=["campaign_name","market","camp_tag"], label_prev="prev", label_curr="curr")
 
-# Sort useful views
 camp_mom_spend = camp_mom.sort_values("spend_delta", ascending=False)
 camp_mom_sales = camp_mom.sort_values("sales_delta", ascending=False)
 
-# Insights internal (legacy simple)
+# Insights internal (legacy)
 insights_internal = []
 total_spend_delta = float(global_curr["spend"][0] - global_prev["spend"][0])
 total_sales_delta = float(global_curr["sales"][0] - global_prev["sales"][0])
@@ -658,7 +644,6 @@ insights_internal.append(f"Spend total Δ: {total_spend_delta:,.2f} €")
 insights_internal.append(f"Sales total Δ: {total_sales_delta:,.2f} €")
 insights_internal.append(f"ACOS Δ: {(acos_curr - acos_prev) * 100:.2f} pp")
 
-# Detect “spend up, sales down” campaigns (top 10)
 w_internal = camp_mom[(camp_mom["spend_delta"] > 0) & (camp_mom["sales_delta"] < 0)].copy()
 w_internal = w_internal.sort_values("spend_delta", ascending=False).head(10)
 if len(w_internal):
@@ -669,7 +654,7 @@ if len(w_internal):
 insights_df = pd.DataFrame({"insight": insights_internal})
 
 # =====================
-# Client summary + email (NEW)
+# Client summary + email
 # =====================
 client_kpis = build_client_kpis(global_prev, global_curr)
 client_insights = build_client_insights(
@@ -695,19 +680,20 @@ st.subheader("📩 Email para el cliente (cercano y profesional)")
 
 e1, e2 = st.columns([1, 1])
 with e1:
-    client_name = st.text_input("Nombre del cliente (opcional)", value="")
-with e2:
     sender_name = st.text_input("Tu nombre (firma)", value="Jordi")
+with e2:
+    st.caption("El email usa CLIENT + POC ya definidos arriba.")
 
 email_subject, email_body = generate_client_email_es(
-    client_name=client_name,
+    client=CLIENT,
+    poc=POC,
     period_prev_label=period_prev_label,
     period_curr_label=period_curr_label,
     client_kpis=client_kpis,
     insights_list=client_insights,
-    actions_list=client_actions
+    actions_list=client_actions,
+    sender_name=sender_name
 )
-email_body = email_body + sender_name
 
 st.text_input("Asunto", value=email_subject)
 st.text_area("Email (copia/pega)", value=email_body, height=280)
@@ -717,9 +703,6 @@ st.text_area("Email (copia/pega)", value=email_body, height=280)
 # =====================
 st.subheader("✅ Preview del reporte (rápido)")
 
-# --------
-# Totales
-# --------
 m1, m2, m3, m4 = st.columns(4)
 
 spend_prev = float(global_prev["spend"][0]); spend_curr = float(global_curr["spend"][0])
@@ -731,7 +714,7 @@ acos_prev = float(global_prev["acos"][0]); acos_curr = float(global_curr["acos"]
 total_spend_delta = spend_curr - spend_prev
 total_sales_delta = sales_curr - sales_prev
 orders_delta = orders_curr - orders_prev
-acos_delta_pp = (acos_curr - acos_prev) * 100  # puntos porcentuales
+acos_delta_pp = (acos_curr - acos_prev) * 100
 
 m1.metric("Spend (Total)", f"{spend_curr:,.2f} €", f"{total_spend_delta:,.2f} €")
 m2.metric("Sales (Total)", f"{sales_curr:,.2f} €", f"{total_sales_delta:,.2f} €")
@@ -739,17 +722,13 @@ m3.metric(
     "ACOS (Total)",
     f"{acos_curr*100:.2f} %",
     f"{acos_delta_pp:.2f} pp",
-    delta_color="inverse"  # ↓ verde, ↑ rojo
+    delta_color="inverse"
 )
 m4.metric("Orders (Total)", f"{orders_curr:,}", f"{orders_delta:,}")
 
 st.markdown("---")
 
-# ----------------
-# Por mercado
-# ----------------
 markets_sorted = sorted(set(by_market_curr["market"]) | set(by_market_prev["market"]))
-
 for mkt in markets_sorted:
     prev_row = by_market_prev[by_market_prev["market"] == mkt]
     curr_row = by_market_curr[by_market_curr["market"] == mkt]
@@ -765,21 +744,21 @@ for mkt in markets_sorted:
     acos_p = safe_div(spend_p, sales_p)
     acos_c = safe_div(spend_c, sales_c)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(f"{mkt} · Spend", f"{spend_c:,.2f} €", f"{spend_c - spend_p:,.2f} €")
-    c2.metric(f"{mkt} · Sales", f"{sales_c:,.2f} €", f"{sales_c - sales_p:,.2f} €")
-    c3.metric(
+    c1m, c2m, c3m, c4m = st.columns(4)
+    c1m.metric(f"{mkt} · Spend", f"{spend_c:,.2f} €", f"{spend_c - spend_p:,.2f} €")
+    c2m.metric(f"{mkt} · Sales", f"{sales_c:,.2f} €", f"{sales_c - sales_p:,.2f} €")
+    c3m.metric(
         f"{mkt} · ACOS",
         f"{acos_c*100:.2f} %",
         f"{(acos_c - acos_p)*100:.2f} pp",
-        delta_color="inverse"  # ↓ verde, ↑ rojo
+        delta_color="inverse"
     )
-    c4.metric(f"{mkt} · Orders", f"{orders_c:,}", f"{orders_c - orders_p:,}")
+    c4m.metric(f"{mkt} · Orders", f"{orders_c:,}", f"{orders_c - orders_p:,}")
 
 tabs = st.tabs(["Cliente (resumen)", "By Market", "By Tag", "Market x Tag", "Campaign MoM", "Insights (interno)"])
 with tabs[0]:
     st.caption("Versión reducida para cliente (genérica, accionable, sin entrar en profundidad).")
-    st.markdown(f"**Periodo:** {period_curr_label} vs {period_prev_label}")
+    st.markdown(f"**Cliente:** {CLIENT}  \n**Periodo:** {period_curr_label} vs {period_prev_label}")
     st.markdown("### KPIs clave (cliente)")
     st.dataframe(client_kpis[["KPI","Current","Previous","Delta","DeltaPct","Unit"]], use_container_width=True)
 
@@ -811,42 +790,40 @@ with tabs[5]:
     st.dataframe(insights_df, use_container_width=True)
 
 # =====================
-# Export XLSX (incluye cliente)
+# Export XLSX (sheet names con CLIENT)
 # =====================
 st.divider()
 st.subheader("💾 Descargar XLSX")
 
 output = BytesIO()
 ts = datetime.now().strftime("%Y-%m-%d")
-file_name = f"AmazonAds_Report_{period_curr_label.replace(' ','-')}_vs_{period_prev_label.replace(' ','-')}_{ts}.xlsx"
+file_name = f"{CLIENT}_AmazonAds_Report_{period_curr_label.replace(' ','-')}_vs_{period_prev_label.replace(' ','-')}_{ts}.xlsx"
 
 try:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # 00: Cliente summary
-        # KPIs
-        client_kpis.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("00_CLIENT_KPIs"))
-        # Insights
-        client_insights_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("00_CLIENT_Insights"))
-        # Actions
-        client_actions_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("00_CLIENT_Actions"))
-        # Top lists
-        winners_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("00_CLIENT_Winners"))
-        watchlist_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("00_CLIENT_Watchlist"))
+        # CLIENT sheets (prefijo corto para evitar límite)
+        client_kpis.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_00_KPIs"))
+        client_insights_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_00_Insights"))
+        client_actions_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_00_Actions"))
+        winners_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_00_Winners"))
+        watchlist_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_00_Watchlist"))
 
-        # Global (interno)
+        # Interno (también con CLIENT, por consistencia)
         gp = global_prev.copy(); gp.insert(0, "period", "prev")
         gc = global_curr.copy(); gc.insert(0, "period", "curr")
         global_sheet = pd.concat([gp, gc], ignore_index=True)
-        global_sheet.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("01_Summary_Global"))
+        global_sheet.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_01_Global"))
 
-        add_mom(by_market_prev, by_market_curr, ["market"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name("02_By_Market"))
-        add_mom(by_tag_prev, by_tag_curr, ["camp_tag"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name("03_By_Tag"))
-        add_mom(by_mkt_tag_prev, by_mkt_tag_curr, ["market","camp_tag"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name("04_Market_x_Tag"))
+        add_mom(by_market_prev, by_market_curr, ["market"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_02_By_Market"))
+        add_mom(by_tag_prev, by_tag_curr, ["camp_tag"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_03_By_Tag"))
+        add_mom(by_mkt_tag_prev, by_mkt_tag_curr, ["market","camp_tag"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_04_Mkt_x_Tag"))
 
-        camp_mom.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("05_Campaign_MoM"))
-        camp_mom_spend.head(100).to_excel(writer, index=False, sheet_name=sanitize_sheet_name("06_Top_Spend_Movers"))
-        camp_mom_sales.head(100).to_excel(writer, index=False, sheet_name=sanitize_sheet_name("07_Top_Sales_Movers"))
-        insights_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name("99_Insights"))
+        camp_mom.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_05_Campaign_MoM"))
+        camp_mom_spend.head(100).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_06_Top_Spend"))
+        camp_mom_sales.head(100).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_07_Top_Sales"))
+
+        # Insights internos
+        insights_df.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_99_Insights"))
 
 except ModuleNotFoundError:
     st.error(
