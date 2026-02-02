@@ -294,7 +294,7 @@ with cc1:
         height=120
     )
 with cc2:
-    tags_simple = st.text_input("Tipos/Tags de campaña separados por coma (internos)", value="NB,BR,AUTO,PAT,KW")
+    tags_simple = st.text_input("Tipos/Tags de campaña separados por coma (internos)", value="NB,BR,AUTO")
     tags_alias = st.text_area(
         "Aliases de tags (opcional). Formato: CANON=alias1,alias2,... (1 por línea)",
         value="",
