@@ -231,55 +231,34 @@ def pick_top_winners(camp_mom: pd.DataFrame, top_n=3) -> pd.DataFrame:
 # NUEVO: prioridades de optimización por ACOS (campaign-level)
 def pick_top_acos_priorities(
     camp_mom: pd.DataFrame,
-    top_n: int = 5,
+    top_n: int = 3,
     min_spend_curr: float = 50.0
 ) -> pd.DataFrame:
     """
-    Devuelve campañas con mayor subida de ACOS (Δ pp) priorizadas para optimización.
-    - Filtra por spend_curr mínimo para evitar ruido.
-    - Ordena por ACOS_delta_pp desc y spend_curr desc.
+    Top campañas (campaign_name x market x camp_tag) con mayor subida de ACOS (Δ pp).
+    Filtra por spend_curr mínimo para evitar ruido.
     """
     if camp_mom is None or camp_mom.empty:
-        return pd.DataFrame(columns=[
-            "campaign_name","market","camp_tag",
-            "spend_curr","sales_curr","acos_curr",
-            "spend_prev","sales_prev","acos_prev",
-            "acos_delta_pp"
-        ])
+        return pd.DataFrame(columns=["campaign_name","market","camp_tag","acos_delta_pp"])
+
+    required = ["campaign_name","market","camp_tag","acos_curr","acos_prev","spend_curr"]
+    for c in required:
+        if c not in camp_mom.columns:
+            return pd.DataFrame(columns=["campaign_name","market","camp_tag","acos_delta_pp"])
 
     df = camp_mom.copy()
-
-    # Blindajes: columnas esperadas
-    required = ["spend_curr","sales_curr","acos_curr","spend_prev","sales_prev","acos_prev","campaign_name","market","camp_tag"]
-    for c in required:
-        if c not in df.columns:
-            return pd.DataFrame(columns=[
-                "campaign_name","market","camp_tag",
-                "spend_curr","sales_curr","acos_curr",
-                "spend_prev","sales_prev","acos_prev",
-                "acos_delta_pp"
-            ])
-
     df["acos_delta_pp"] = (df["acos_curr"] - df["acos_prev"]) * 100.0
 
-    # Filtro: inversión relevante + campañas con data
+    # ruido fuera: solo campañas con inversión mínima y ACOS empeora (sube)
     df = df[df["spend_curr"] >= float(min_spend_curr)].copy()
+    df = df[df["acos_delta_pp"] > 0].copy()
 
-    # Nos interesan sobre todo subidas de ACOS (prioridad). Si no hay, devolvemos top por abs.
-    up = df[df["acos_delta_pp"] > 0].copy()
-    if not up.empty:
-        dfp = up.sort_values(["acos_delta_pp","spend_curr"], ascending=[False, False]).head(top_n)
-    else:
-        dfp = df.assign(abs_pp=df["acos_delta_pp"].abs()).sort_values(["abs_pp","spend_curr"], ascending=[False, False]).head(top_n)
-        dfp = dfp.drop(columns=["abs_pp"], errors="ignore")
+    if df.empty:
+        return pd.DataFrame(columns=["campaign_name","market","camp_tag","acos_delta_pp"])
 
-    cols = [
-        "campaign_name","market","camp_tag",
-        "spend_curr","sales_curr","acos_curr",
-        "spend_prev","sales_prev","acos_prev",
-        "acos_delta_pp"
-    ]
-    return dfp[cols]
+    df = df.sort_values(["acos_delta_pp"], ascending=[False]).head(top_n)
+
+    return df[["campaign_name","market","camp_tag","acos_delta_pp"]]
 
 def _neutral_direction(value: float, eps: float = 1e-12) -> str:
     if value > eps:
