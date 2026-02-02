@@ -795,8 +795,40 @@ camp_prev = aggregate(df_prev, ["campaign_name","market","camp_tag"])
 camp_curr = aggregate(df_curr, ["campaign_name","market","camp_tag"])
 camp_mom  = add_mom(camp_prev, camp_curr, keys=["campaign_name","market","camp_tag"], label_prev="prev", label_curr="curr")
 
-camp_mom_spend = camp_mom.sort_values("spend_delta", ascending=False)
-camp_mom_sales = camp_mom.sort_values("sales_delta", ascending=False)
+def build_top_movers(df: pd.DataFrame, metric: str, top_n: int = 100, min_curr: float = 50.0) -> pd.DataFrame:
+    """
+    Genera un top 'limpio' y estable para Spend o Sales.
+    Ordena por delta desc y desempata por valor actual desc.
+    min_curr filtra ruido (campañas con volumen muy bajo en el mes actual).
+    """
+    if df is None or df.empty:
+        return df
+
+    delta_col = f"{metric}_delta"
+    curr_col = f"{metric}_curr"
+
+    out = df.copy()
+
+    # Si faltan columnas, devolvemos algo razonable para no romper
+    if delta_col not in out.columns or curr_col not in out.columns:
+        return out.sort_values(delta_col, ascending=False).head(top_n) if delta_col in out.columns else out.head(top_n)
+
+    # filtro de ruido
+    if min_curr is not None and float(min_curr) > 0:
+        out = out[out[curr_col] >= float(min_curr)].copy()
+
+    # Orden estable + criterio de desempate para que el "top" tenga sentido
+    out = out.sort_values(
+        by=[delta_col, curr_col, "campaign_name"],
+        ascending=[False, False, True],
+        kind="mergesort"
+    )
+
+    return out.head(top_n)
+
+# Top sheets (ordenados + sin ruido)
+camp_mom_spend = build_top_movers(camp_mom, metric="spend", top_n=100, min_curr=50.0)
+camp_mom_sales = build_top_movers(camp_mom, metric="sales", top_n=100, min_curr=50.0)
 
 # =====================
 # Client summary + email
@@ -970,8 +1002,8 @@ try:
         add_mom(by_mkt_tag_prev, by_mkt_tag_curr, ["market","camp_tag"]).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_04_Mkt_x_Tag"))
 
         camp_mom.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_05_Campaign_MoM"))
-        camp_mom_spend.head(100).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_06_Top_Spend"))
-        camp_mom_sales.head(100).to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_07_Top_Sales"))
+        camp_mom_spend.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_06_Top_Spend"))
+        camp_mom_sales.to_excel(writer, index=False, sheet_name=sanitize_sheet_name(f"{client_prefix}_07_Top_Sales"))
 
 except ModuleNotFoundError:
     st.error(
