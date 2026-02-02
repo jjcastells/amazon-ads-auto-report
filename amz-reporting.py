@@ -305,9 +305,6 @@ def build_client_insights(global_prev: pd.DataFrame,
     watch = pick_top_watchlist(camp_mom, top_n=3)
     wins = pick_top_winners(camp_mom, top_n=3)
 
-    # NUEVO: prioridades ACOS por campaña (para optimización)
-    acos_prio = pick_top_acos_priorities(camp_mom, top_n=5, min_spend_curr=50.0)
-
     insights = []
 
     # 1) Foto del mes (neutral)
@@ -322,28 +319,27 @@ def build_client_insights(global_prev: pd.DataFrame,
         )
     })
 
-    # 2) Prioridades ACOS (acción/insight basado en tu framework)
-# 2) Prioridades ACOS (Top 3) - solo mostramos Δ ACOS
-acos_prio = pick_top_acos_priorities(camp_mom, top_n=3, min_spend_curr=50.0)
+    # 2) Prioridades ACOS (Top 3) - solo mostramos Δ ACOS
+    acos_prio = pick_top_acos_priorities(camp_mom, top_n=3, min_spend_curr=50.0)
 
-if not acos_prio.empty:
-    items = []
-    for _, r in acos_prio.iterrows():
-        name = str(r["campaign_name"])
-        mkt = str(r.get("market",""))
-        tag = str(r.get("camp_tag",""))
-        pp = float(r.get("acos_delta_pp", 0.0))
-        items.append(f"{name} ({mkt} | {tag}): Δ ACOS {fmt_pp_es(pp)}")
+    if not acos_prio.empty:
+        items = []
+        for _, r in acos_prio.iterrows():
+            name = str(r["campaign_name"])
+            mkt = str(r.get("market",""))
+            tag = str(r.get("camp_tag",""))
+            pp = float(r.get("acos_delta_pp", 0.0))
+            items.append(f"{name} ({mkt} | {tag}): Δ ACOS {fmt_pp_es(pp)}")
 
-    insights.append({
-        "Title": "Prioridades de optimización (ACOS)",
-        "What": "Top 3 campañas foco (por subida de ACOS vs mes anterior): " + "; ".join(items) + "."
-    })
-else:
-    insights.append({
-        "Title": "Prioridades de optimización (ACOS)",
-        "What": "No se detectan subidas relevantes de ACOS con inversión suficiente (por encima del umbral)."
-    })
+        insights.append({
+            "Title": "Prioridades de optimización (ACOS)",
+            "What": "Top 3 campañas foco (por subida de ACOS vs mes anterior): " + "; ".join(items) + "."
+        })
+    else:
+        insights.append({
+            "Title": "Prioridades de optimización (ACOS)",
+            "What": "No se detectan subidas relevantes de ACOS con inversión suficiente (por encima del umbral)."
+        })
 
     # 3) CR
     if abs(cr_delta_pp) >= 0.10:
