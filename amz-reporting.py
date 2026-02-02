@@ -418,10 +418,23 @@ insights_df = pd.DataFrame({"insight": insights})
 # =====================
 st.subheader("✅ Preview del reporte (rápido)")
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Spend (prev)", f"{global_prev['spend'][0]:,.2f} €", f"{total_spend_delta:,.2f} €")
-m2.metric("Sales (prev)", f"{global_prev['sales'][0]:,.2f} €", f"{total_sales_delta:,.2f} €")
-m3.metric("ACOS (prev)", f"{global_prev['acos'][0]*100:.2f} %", f"{(acos_curr - acos_prev)*100:.2f} pp")
-m4.metric("Orders (prev)", f"{int(global_prev['orders'][0]):,}", f"{int(global_curr['orders'][0]-global_prev['orders'][0]):,}")
+
+spend_prev = float(global_prev["spend"][0]); spend_curr = float(global_curr["spend"][0])
+sales_prev = float(global_prev["sales"][0]); sales_curr = float(global_curr["sales"][0])
+orders_prev = int(global_prev["orders"][0]); orders_curr = int(global_curr["orders"][0])
+
+acos_prev = float(global_prev["acos"][0]); acos_curr = float(global_curr["acos"][0])
+roas_prev = float(global_prev["roas"][0]); roas_curr = float(global_curr["roas"][0])
+
+total_spend_delta = spend_curr - spend_prev
+total_sales_delta = sales_curr - sales_prev
+orders_delta = orders_curr - orders_prev
+acos_delta_pp = (acos_curr - acos_prev) * 100  # puntos porcentuales
+
+m1.metric("Spend (curr)", f"{spend_curr:,.2f} €", f"{total_spend_delta:,.2f} €")
+m2.metric("Sales (curr)", f"{sales_curr:,.2f} €", f"{total_sales_delta:,.2f} €")
+m3.metric("ACOS (curr)", f"{acos_curr*100:.2f} %", f"{acos_delta_pp:.2f} pp")
+m4.metric("Orders (curr)", f"{orders_curr:,}", f"{orders_delta:,}")
 
 tabs = st.tabs(["By Market", "By Tag", "Market x Tag", "Campaign MoM", "Insights"])
 with tabs[0]:
