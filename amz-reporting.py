@@ -436,7 +436,12 @@ acos_delta_pp = (acos_curr - acos_prev) * 100  # puntos porcentuales
 
 m1.metric("Spend (Total)", f"{spend_curr:,.2f} €", f"{total_spend_delta:,.2f} €")
 m2.metric("Sales (Total)", f"{sales_curr:,.2f} €", f"{total_sales_delta:,.2f} €")
-m3.metric("ACOS (Total)", f"{acos_curr*100:.2f} %", f"{acos_delta_pp:.2f} pp")
+m3.metric(
+    "ACOS (Total)",
+    f"{acos_curr*100:.2f} %",
+    f"{acos_delta_pp:.2f} pp",
+    delta_color="inverse"  # ↓ verde, ↑ rojo
+)
 m4.metric("Orders (Total)", f"{orders_curr:,}", f"{orders_delta:,}")
 
 st.markdown("---")
@@ -464,7 +469,12 @@ for mkt in markets_sorted:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(f"{mkt} · Spend", f"{spend_c:,.2f} €", f"{spend_c - spend_p:,.2f} €")
     c2.metric(f"{mkt} · Sales", f"{sales_c:,.2f} €", f"{sales_c - sales_p:,.2f} €")
-    c3.metric(f"{mkt} · ACOS", f"{acos_c*100:.2f} %", f"{(acos_c - acos_p)*100:.2f} pp")
+    c3.metric(
+        f"{mkt} · ACOS",
+        f"{acos_c*100:.2f} %",
+        f"{(acos_c - acos_p)*100:.2f} pp",
+        delta_color="inverse"  # ↓ verde, ↑ rojo
+    )
     c4.metric(f"{mkt} · Orders", f"{orders_c:,}", f"{orders_c - orders_p:,}")
 
 tabs = st.tabs(["By Market", "By Tag", "Market x Tag", "Campaign MoM", "Insights"])
