@@ -298,7 +298,7 @@ def build_client_actions(global_prev: pd.DataFrame,
     else:
         actions.append("Prioridad: mantener estabilidad y optimizar de forma incremental.")
 
-    actions.append("Recorte de desperdicio: revisar campañas/targets con inversión creciente sin ventas (negatives, limpieza de targets, pausas tácticas).")
+    actions.append("Higiene de cuenta: revisar campañas/targets con inversión creciente sin ventas (negatives, limpieza de targets, pausas tácticas).")
     actions.append("Escalar ganadores: incrementar presupuesto/pujas gradualmente en campañas con ventas al alza y ACOS estable o mejorando.")
     actions.append("Ajuste fino: revisar términos de búsqueda y distribución por tipo (NB/BR/AUTO) para mejorar eficiencia sin frenar volumen.")
 
