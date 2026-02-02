@@ -47,15 +47,13 @@ def to_float_euaware(series: pd.Series) -> pd.Series:
     s = series.astype(str).str.strip()
     s = s.replace({"nan": "", "None": "", "<NA>": "", "NaT": ""})
 
-    # limpia moneda/espacios raros
     s = s.str.replace("\xa0", " ", regex=False)
     s = s.str.replace("€", "", regex=False)
 
-    # Detecta si predomina coma decimal
     if (s.str.contains(",").mean() > 0.5):
         s = s.str.replace(r"[^\d,.\-]", "", regex=True)
-        s = s.str.replace(".", "", regex=False)   # separador miles
-        s = s.str.replace(",", ".", regex=False)  # decimal
+        s = s.str.replace(".", "", regex=False)
+        s = s.str.replace(",", ".", regex=False)
     else:
         s = s.str.replace(r"[^\d.\-]", "", regex=True)
         s = s.str.replace(",", "", regex=False)
@@ -145,28 +143,23 @@ def safe_div(a: float, b: float) -> float:
     return float(a) / float(b) if float(b) != 0 else 0.0
 
 def fmt_eur_es(x: float) -> str:
-    # Ejemplo: 5.542,80 €
     s = f"{float(x):,.2f}"
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{s} €"
 
 def fmt_int_es(x: float | int) -> str:
-    # Ejemplo: 1.228
     s = f"{int(x):,}"
     return s.replace(",", ".")
 
 def fmt_pp_es(pp: float) -> str:
-    # puntos porcentuales: +6,67 pp
     s = f"{pp:+.2f}".replace(".", ",")
     return f"{s} pp"
 
 def fmt_pct_es(ratio: float) -> str:
-    # Ejemplo: 20,27%
     s = f"{ratio*100:.2f}".replace(".", ",")
     return f"{s}%"
 
 def fmt_num_es(x: float) -> str:
-    # Ejemplo: 4,93
     return f"{float(x):.2f}".replace(".", ",")
 
 def fmt_delta_eur_es(delta: float, label_prev: str) -> str:
@@ -197,6 +190,12 @@ def build_client_kpis(global_prev: pd.DataFrame, global_curr: pd.DataFrame) -> p
     ctr_prev = float(global_prev["ctr"][0]); ctr_curr = float(global_curr["ctr"][0])
     cpc_prev = float(global_prev["cpc"][0]); cpc_curr = float(global_curr["cpc"][0])
 
+    # NUEVO: CR + CAC (ads)
+    cr_prev = safe_div(orders_prev, clicks_prev)
+    cr_curr = safe_div(orders_curr, clicks_curr)
+    cac_prev = safe_div(spend_prev, orders_prev)  # coste por pedido (ads)
+    cac_curr = safe_div(spend_curr, orders_curr)
+
     def pct_delta(curr, prev):
         return safe_div(curr - prev, prev) if float(prev) != 0 else 0.0
 
@@ -206,6 +205,8 @@ def build_client_kpis(global_prev: pd.DataFrame, global_curr: pd.DataFrame) -> p
         ["Orders", orders_curr, orders_prev, orders_curr - orders_prev, pct_delta(orders_curr, orders_prev), "#"],
         ["ACOS", acos_curr, acos_prev, acos_curr - acos_prev, 0.0, "ratio"],
         ["ROAS", roas_curr, roas_prev, roas_curr - roas_prev, 0.0, "ratio"],
+        ["CR", cr_curr, cr_prev, cr_curr - cr_prev, 0.0, "ratio"],     # NUEVO
+        ["CAC", cac_curr, cac_prev, cac_curr - cac_prev, 0.0, "€"],     # NUEVO (ads)
         ["CTR", ctr_curr, ctr_prev, ctr_curr - ctr_prev, 0.0, "ratio"],
         ["CPC", cpc_curr, cpc_prev, cpc_curr - cpc_prev, 0.0, "€"],
         ["Clicks", clicks_curr, clicks_prev, clicks_curr - clicks_prev, pct_delta(clicks_curr, clicks_prev), "#"],
@@ -216,16 +217,27 @@ def build_client_kpis(global_prev: pd.DataFrame, global_curr: pd.DataFrame) -> p
 def pick_top_watchlist(camp_mom: pd.DataFrame, top_n=3) -> pd.DataFrame:
     w = camp_mom[(camp_mom["spend_delta"] > 0) & (camp_mom["sales_delta"] < 0)].copy()
     w = w.sort_values("spend_delta", ascending=False).head(top_n)
-    cols = ["campaign_name","market","camp_tag","spend_delta","sales_delta","acos_delta"]
+    cols = ["campaign_name","market","camp_tag","spend_delta","sales_delta","acos_delta","cr_delta","cac_delta"]
     cols = [c for c in cols if c in w.columns]
     return w[cols]
 
 def pick_top_winners(camp_mom: pd.DataFrame, top_n=3) -> pd.DataFrame:
     w = camp_mom[(camp_mom["sales_delta"] > 0) & (camp_mom["acos_delta"] <= 0)].copy()
     w = w.sort_values("sales_delta", ascending=False).head(top_n)
-    cols = ["campaign_name","market","camp_tag","sales_delta","spend_delta","acos_delta"]
+    cols = ["campaign_name","market","camp_tag","sales_delta","spend_delta","acos_delta","cr_delta","cac_delta"]
     cols = [c for c in cols if c in w.columns]
     return w[cols]
+
+def _neutral_direction(value: float, eps: float = 1e-12) -> str:
+    if value > eps:
+        return "sube"
+    if value < -eps:
+        return "baja"
+    return "se mantiene"
+
+def _pp(value_ratio_delta: float) -> float:
+    # ratio delta -> puntos porcentuales
+    return float(value_ratio_delta) * 100.0
 
 def build_client_insights(global_prev: pd.DataFrame,
                          global_curr: pd.DataFrame,
@@ -237,27 +249,82 @@ def build_client_insights(global_prev: pd.DataFrame,
 
     spend_prev = float(global_prev["spend"][0]); spend_curr = float(global_curr["spend"][0])
     sales_prev = float(global_prev["sales"][0]); sales_curr = float(global_curr["sales"][0])
+    orders_prev = int(global_prev["orders"][0]); orders_curr = int(global_curr["orders"][0])
+    clicks_prev = int(global_prev["clicks"][0]); clicks_curr = int(global_curr["clicks"][0])
+
     acos_prev = float(global_prev["acos"][0]); acos_curr = float(global_curr["acos"][0])
 
     spend_delta = spend_curr - spend_prev
     sales_delta = sales_curr - sales_prev
+    orders_delta = orders_curr - orders_prev
     acos_delta_pp = (acos_curr - acos_prev) * 100
 
+    # NUEVO: CR + CAC (ads)
+    cr_prev = safe_div(orders_prev, clicks_prev)
+    cr_curr = safe_div(orders_curr, clicks_curr)
+    cr_delta_pp = (cr_curr - cr_prev) * 100
+
+    cac_prev = safe_div(spend_prev, orders_prev)
+    cac_curr = safe_div(spend_curr, orders_curr)
+    cac_delta = cac_curr - cac_prev
+
+    # driver por spend (market)
     mom_mkt = add_mom(by_market_prev, by_market_curr, ["market"])
     mom_mkt = mom_mkt.sort_values("spend_delta", ascending=False)
     top_mkt_spend = mom_mkt.head(1).iloc[0].to_dict() if len(mom_mkt) else None
 
+    # listas
     watch = pick_top_watchlist(camp_mom, top_n=3)
     wins = pick_top_winners(camp_mom, top_n=3)
 
     insights = []
 
-    tone = "mejora" if acos_delta_pp < 0 else "empeora" if acos_delta_pp > 0 else "se mantiene"
+    # 1) Foto del mes (hechos + lenguaje neutral)
     insights.append({
-        "Title": "Resumen del mes",
-        "What": f"Comparando {period_curr_label} vs {period_prev_label}: Spend Δ {fmt_eur_es(spend_delta)}, Sales Δ {fmt_eur_es(sales_delta)} y el ACOS {tone} ({acos_delta_pp:+.2f} pp)."
+        "Title": "Foto del mes (resumen)",
+        "What": (
+            f"Comparando {period_curr_label} vs {period_prev_label}: "
+            f"Spend Δ {fmt_eur_es(spend_delta)}, Sales Δ {fmt_eur_es(sales_delta)}, Orders Δ {fmt_int_es(orders_delta)}. "
+            f"ACOS {_neutral_direction(acos_delta_pp)} ({acos_delta_pp:+.2f} pp). "
+            f"CR {_neutral_direction(cr_delta_pp)} ({cr_delta_pp:+.2f} pp). "
+            f"CAC (ads) {_neutral_direction(cac_delta)} ({fmt_eur_es(cac_delta)})."
+        )
     })
 
+    # 2) Calidad del tráfico (CR) – siempre neutral, sin juicio
+    if abs(cr_delta_pp) >= 0.10:
+        insights.append({
+            "Title": "Calidad de tráfico (CR)",
+            "What": (
+                f"El CR {_neutral_direction(cr_delta_pp)} ({cr_delta_pp:+.2f} pp). "
+                "Lo desglosamos por mercado y campañas para identificar si el cambio viene por mix de términos / segmentación."
+            )
+        })
+    else:
+        insights.append({
+            "Title": "Calidad de tráfico (CR)",
+            "What": (
+                "El CR se mantiene estable (variación pequeña). "
+                "Los cambios de resultado se explican más por inversión (Spend) y/o precio del clic (CPC) que por conversión."
+            )
+        })
+
+    # 3) Coste por pedido (CAC ads)
+    if abs(cac_delta) >= 0.05:
+        insights.append({
+            "Title": "Coste por pedido (CAC ads)",
+            "What": (
+                f"El CAC (ads) {_neutral_direction(cac_delta)} ({fmt_eur_es(cac_delta)}). "
+                "Esto sirve como referencia rápida del coste por pedido atribuido a Ads."
+            )
+        })
+    else:
+        insights.append({
+            "Title": "Coste por pedido (CAC ads)",
+            "What": "CAC (ads) estable (variación pequeña). Mantendremos el foco en consistencia y ajustes graduales."
+        })
+
+    # 4) Driver principal por inversión (market)
     if top_mkt_spend:
         mkt = top_mkt_spend.get("market", "N/A")
         sd = float(top_mkt_spend.get("spend_delta", 0.0))
@@ -267,40 +334,71 @@ def build_client_insights(global_prev: pd.DataFrame,
             "What": f"{mkt} concentra el mayor cambio (Spend {fmt_eur_es(sd)} con Sales {fmt_eur_es(sld)})."
         })
 
+    # 5) Campañas (listas cortas, neutras)
     if len(watch):
-        # lista corta, sin formatos raros
         items = [f"{r['campaign_name']} ({r.get('market','')})" for _, r in watch.iterrows()]
         insights.append({
-            "Title": "Campañas a revisar",
+            "Title": "Campañas a monitorizar",
             "What": "Sube la inversión y caen las ventas en: " + "; ".join(items) + "."
         })
 
     if len(wins):
         items = [f"{r['campaign_name']} ({r.get('market','')})" for _, r in wins.iterrows()]
         insights.append({
-            "Title": "Lo que está funcionando",
-            "What": "Ventas al alza con ACOS estable/mejorando en: " + "; ".join(items) + "."
+            "Title": "Campañas con tracción",
+            "What": "Ventas al alza con ACOS estable/bajando en: " + "; ".join(items) + "."
         })
 
-    return insights[:5]
+    return insights[:6]
 
 def build_client_actions(global_prev: pd.DataFrame,
                          global_curr: pd.DataFrame,
                          camp_mom: pd.DataFrame) -> list[str]:
+    spend_prev = float(global_prev["spend"][0]); spend_curr = float(global_curr["spend"][0])
+    sales_prev = float(global_prev["sales"][0]); sales_curr = float(global_curr["sales"][0])
+    orders_prev = int(global_prev["orders"][0]); orders_curr = int(global_curr["orders"][0])
+    clicks_prev = int(global_prev["clicks"][0]); clicks_curr = int(global_curr["clicks"][0])
+
     acos_prev = float(global_prev["acos"][0]); acos_curr = float(global_curr["acos"][0])
+    cr_prev = safe_div(orders_prev, clicks_prev)
+    cr_curr = safe_div(orders_curr, clicks_curr)
+    cac_prev = safe_div(spend_prev, orders_prev)
+    cac_curr = safe_div(spend_curr, orders_curr)
+
     acos_delta_pp = (acos_curr - acos_prev) * 100
+    cr_delta_pp = (cr_curr - cr_prev) * 100
+    cac_delta = cac_curr - cac_prev
+    sales_delta = sales_curr - sales_prev
 
     actions = []
-    if acos_delta_pp > 0.5:
-        actions.append("Prioridad: recuperar eficiencia (ACOS) sin perder volumen.")
-    elif acos_delta_pp < -0.5:
-        actions.append("Prioridad: escalar lo que funciona manteniendo eficiencia.")
-    else:
-        actions.append("Prioridad: mantener estabilidad y optimizar de forma incremental.")
 
+    # Acción 1: siempre neutral, basada en señales
+    if sales_delta >= 0 and acos_delta_pp <= 0:
+        actions.append("Mantener y escalar gradualmente donde se confirma tracción (ventas al alza con ACOS estable/bajando).")
+    elif sales_delta >= 0 and acos_delta_pp > 0:
+        actions.append("Consolidar crecimiento controlando el mix (priorizar eficiencia en campañas con mayor crecimiento de inversión).")
+    elif sales_delta < 0 and acos_delta_pp <= 0:
+        actions.append("Recuperar volumen sin alterar demasiado el mix (revisar cobertura y términos con caída de pedidos/ventas).")
+    else:
+        actions.append("Priorizar estabilidad: aislar cambios por mercado/campaña y ajustar de forma incremental en las áreas con mayor impacto.")
+
+    # Acción 2: higiene (siempre)
     actions.append("Higiene de cuenta: revisar campañas/targets con inversión creciente sin ventas (negatives, limpieza de targets, pausas tácticas).")
-    actions.append("Escalar ganadores: incrementar presupuesto/pujas gradualmente en campañas con ventas al alza y ACOS estable o mejorando.")
-    actions.append("Ajuste fino: revisar términos de búsqueda y distribución por tipo (NB/BR/AUTO) para mejorar eficiencia sin frenar volumen.")
+
+    # Acción 3: CR
+    if abs(cr_delta_pp) >= 0.10:
+        actions.append("Revisar CR por mercado/campaña (términos de búsqueda, segmentación y páginas de producto) para aislar el origen del cambio.")
+    else:
+        actions.append("Mantener seguimiento de CR (estable) y centrar ajustes en inversión y estructura de campañas.")
+
+    # Acción 4: CAC
+    if abs(cac_delta) >= 0.05:
+        actions.append("Monitorizar CAC (ads) y ajustar presupuesto/pujas en función de campañas con mejor coste por pedido.")
+    else:
+        actions.append("CAC (ads) estable: continuar con escalado/ajustes graduales manteniendo consistencia.")
+
+    # Acción 5: estructura
+    actions.append("Ajuste fino: revisar distribución por tipo (NB/BR/AUTO) para equilibrar volumen y consistencia en la relación inversión/ventas.")
 
     return actions[:5]
 
@@ -308,7 +406,6 @@ def format_saludo_poc(poc: str) -> str:
     poc = str(poc).strip()
     if not poc:
         return "Hola,"
-    # soporta "Alex, Aleix" etc.
     poc = re.sub(r"\s*,\s*", ", ", poc)
     return f"Hola {poc},"
 
@@ -325,7 +422,6 @@ def generate_client_email_es_plain(
 
     subject = f"{client} | Amazon Ads — Reporte {period_curr_label} (vs {period_prev_label})"
 
-    # Helpers para extraer KPIs
     def get_row(kpi):
         return client_kpis[client_kpis["KPI"] == kpi].iloc[0]
 
@@ -334,17 +430,21 @@ def generate_client_email_es_plain(
     orders = get_row("Orders")
     acos = get_row("ACOS")
     roas = get_row("ROAS")
+    cr = get_row("CR")
+    cac = get_row("CAC")
 
-    # Lines KPI (texto plano)
+    # KPIs (texto plano, neutro)
     kpi_lines = [
         f"- Spend: {fmt_eur_es(spend['Current'])} {fmt_delta_eur_es(float(spend['Delta']), period_prev_label)}",
         f"- Sales: {fmt_eur_es(sales['Current'])} {fmt_delta_eur_es(float(sales['Delta']), period_prev_label)}",
         f"- Orders: {fmt_int_es(orders['Current'])} {fmt_delta_int_es(int(orders['Delta']), period_prev_label)}",
         f"- ACOS: {fmt_pct_es(float(acos['Current']))} (Δ {fmt_pp_es(float(acos['Delta']) * 100)} vs {period_prev_label})",
         f"- ROAS: {fmt_num_es(float(roas['Current']))} (Δ {fmt_num_es(float(roas['Delta']))} vs {period_prev_label})",
+        f"- CR: {fmt_pct_es(float(cr['Current']))} (Δ {fmt_pp_es(float(cr['Delta']) * 100)} vs {period_prev_label})",
+        f"- CAC (ads): {fmt_eur_es(float(cac['Current']))} {fmt_delta_eur_es(float(cac['Delta']), period_prev_label)}",
     ]
 
-    # Insights (máx 4, texto directo)
+    # Insights (máx 4)
     insight_lines = []
     for it in insights_list[:4]:
         title = str(it.get("Title", "")).strip()
@@ -361,7 +461,6 @@ def generate_client_email_es_plain(
     action_lines = [f"- {a}" for a in actions_list[:4]] if actions_list else ["- (Sin acciones definidas)"]
 
     sep = "--------------------------------"
-
     saludo = format_saludo_poc(poc)
 
     body = "\n".join([
@@ -469,13 +568,19 @@ def aggregate(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
     g["roas"] = np.where(g["spend"] > 0, g["sales"] / g["spend"], 0.0)
     g["ctr"]  = np.where(g["impressions"] > 0, g["clicks"] / g["impressions"], 0.0)
     g["cpc"]  = np.where(g["clicks"] > 0, g["spend"] / g["clicks"], 0.0)
+
+    # NUEVO: CR y CAC (ads)
+    g["cr"] = np.where(g["clicks"] > 0, g["orders"] / g["clicks"], 0.0)
+    g["cac"] = np.where(g["orders"] > 0, g["spend"] / g["orders"], 0.0)
+
     return g
 
 def add_mom(prev: pd.DataFrame, curr: pd.DataFrame, keys: list[str], label_prev="prev", label_curr="curr") -> pd.DataFrame:
     p = prev.copy()
     c = curr.copy()
 
-    metric_cols = ["spend","sales","orders","clicks","impressions","acos","roas","ctr","cpc"]
+    # NUEVO: añadimos cr y cac
+    metric_cols = ["spend","sales","orders","clicks","impressions","acos","roas","ctr","cpc","cr","cac"]
 
     p = p.rename(columns={m: f"{m}_{label_prev}" for m in metric_cols})
     c = c.rename(columns={m: f"{m}_{label_curr}" for m in metric_cols})
@@ -488,7 +593,8 @@ def add_mom(prev: pd.DataFrame, curr: pd.DataFrame, keys: list[str], label_prev=
         base = out[f"{m}_{label_prev}"].replace(0, np.nan)
         out[f"{m}_delta_pct"] = (out[f"{m}_delta"] / base).replace([np.inf, -np.inf], 0).fillna(0.0)
 
-    for m in ["acos","roas","ctr","cpc"]:
+    # ratios deltas (absolutos)
+    for m in ["acos","roas","ctr","cpc","cr","cac"]:
         out[f"{m}_delta"] = out[f"{m}_{label_curr}"] - out[f"{m}_{label_prev}"]
 
     return out
@@ -622,6 +728,8 @@ global_prev["acos"] = safe_div(global_prev["spend"][0], global_prev["sales"][0])
 global_prev["roas"] = safe_div(global_prev["sales"][0], global_prev["spend"][0])
 global_prev["ctr"]  = safe_div(global_prev["clicks"][0], global_prev["impressions"][0])
 global_prev["cpc"]  = safe_div(global_prev["spend"][0], global_prev["clicks"][0])
+global_prev["cr"]   = safe_div(global_prev["orders"][0], global_prev["clicks"][0])          # NUEVO
+global_prev["cac"]  = safe_div(global_prev["spend"][0], global_prev["orders"][0])          # NUEVO (ads)
 
 global_curr = pd.DataFrame([{
     "spend": df_curr["spend"].sum(),
@@ -634,6 +742,8 @@ global_curr["acos"] = safe_div(global_curr["spend"][0], global_curr["sales"][0])
 global_curr["roas"] = safe_div(global_curr["sales"][0], global_curr["spend"][0])
 global_curr["ctr"]  = safe_div(global_curr["clicks"][0], global_curr["impressions"][0])
 global_curr["cpc"]  = safe_div(global_curr["spend"][0], global_curr["clicks"][0])
+global_curr["cr"]   = safe_div(global_curr["orders"][0], global_curr["clicks"][0])          # NUEVO
+global_curr["cac"]  = safe_div(global_curr["spend"][0], global_curr["orders"][0])          # NUEVO (ads)
 
 by_market_prev = aggregate(df_prev, ["market"])
 by_market_curr = aggregate(df_curr, ["market"])
