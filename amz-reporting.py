@@ -417,6 +417,10 @@ insights_df = pd.DataFrame({"insight": insights})
 # UI metrics quick
 # =====================
 st.subheader("✅ Preview del reporte (rápido)")
+
+# --------
+# Totales
+# --------
 m1, m2, m3, m4 = st.columns(4)
 
 spend_prev = float(global_prev["spend"][0]); spend_curr = float(global_curr["spend"][0])
@@ -424,17 +428,44 @@ sales_prev = float(global_prev["sales"][0]); sales_curr = float(global_curr["sal
 orders_prev = int(global_prev["orders"][0]); orders_curr = int(global_curr["orders"][0])
 
 acos_prev = float(global_prev["acos"][0]); acos_curr = float(global_curr["acos"][0])
-roas_prev = float(global_prev["roas"][0]); roas_curr = float(global_curr["roas"][0])
 
 total_spend_delta = spend_curr - spend_prev
 total_sales_delta = sales_curr - sales_prev
 orders_delta = orders_curr - orders_prev
 acos_delta_pp = (acos_curr - acos_prev) * 100  # puntos porcentuales
 
-m1.metric("Spend (curr)", f"{spend_curr:,.2f} €", f"{total_spend_delta:,.2f} €")
-m2.metric("Sales (curr)", f"{sales_curr:,.2f} €", f"{total_sales_delta:,.2f} €")
-m3.metric("ACOS (curr)", f"{acos_curr*100:.2f} %", f"{acos_delta_pp:.2f} pp")
-m4.metric("Orders (curr)", f"{orders_curr:,}", f"{orders_delta:,}")
+m1.metric("Spend (Total)", f"{spend_curr:,.2f} €", f"{total_spend_delta:,.2f} €")
+m2.metric("Sales (Total)", f"{sales_curr:,.2f} €", f"{total_sales_delta:,.2f} €")
+m3.metric("ACOS (Total)", f"{acos_curr*100:.2f} %", f"{acos_delta_pp:.2f} pp")
+m4.metric("Orders (Total)", f"{orders_curr:,}", f"{orders_delta:,}")
+
+st.markdown("---")
+
+# ----------------
+# Por mercado
+# ----------------
+markets_sorted = sorted(set(by_market_curr["market"]) | set(by_market_prev["market"]))
+
+for mkt in markets_sorted:
+    prev_row = by_market_prev[by_market_prev["market"] == mkt]
+    curr_row = by_market_curr[by_market_curr["market"] == mkt]
+
+    spend_p = float(prev_row["spend"].iloc[0]) if not prev_row.empty else 0.0
+    sales_p = float(prev_row["sales"].iloc[0]) if not prev_row.empty else 0.0
+    orders_p = int(prev_row["orders"].iloc[0]) if not prev_row.empty else 0
+
+    spend_c = float(curr_row["spend"].iloc[0]) if not curr_row.empty else 0.0
+    sales_c = float(curr_row["sales"].iloc[0]) if not curr_row.empty else 0.0
+    orders_c = int(curr_row["orders"].iloc[0]) if not curr_row.empty else 0
+
+    acos_p = safe_div(spend_p, sales_p)
+    acos_c = safe_div(spend_c, sales_c)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"{mkt} · Spend", f"{spend_c:,.2f} €", f"{spend_c - spend_p:,.2f} €")
+    c2.metric(f"{mkt} · Sales", f"{sales_c:,.2f} €", f"{sales_c - sales_p:,.2f} €")
+    c3.metric(f"{mkt} · ACOS", f"{acos_c*100:.2f} %", f"{(acos_c - acos_p)*100:.2f} pp")
+    c4.metric(f"{mkt} · Orders", f"{orders_c:,}", f"{orders_c - orders_p:,}")
 
 tabs = st.tabs(["By Market", "By Tag", "Market x Tag", "Campaign MoM", "Insights"])
 with tabs[0]:
